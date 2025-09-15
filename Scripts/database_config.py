@@ -1,7 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
 
 
 """
@@ -14,9 +10,9 @@ import mysql.connector
 DB_CONFIG = {
     'host': 'database-1.ctnfprzjtuyt.us-east-1.rds.amazonaws.com',
     'user': 'admin',
-    'password': 'Dnnbmstn1jrg',
-    'database': 'DataWarehouse',
-    'port': 3306
+    'password': 'yourpassword',
+    'database': 'yourdatabase',
+    'port': 1
 }
 
 def get_database_connection():
