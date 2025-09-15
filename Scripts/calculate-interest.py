@@ -1,197 +1,428 @@
-        
-@cli.command()
-@click.option('--casenumber', prompt='Enter case number', help='Case number to calculate interest')
-@click.option('--graphics', is_flag=True, help='Enable pie chart visualization')
-def calculate_interest(casenumber, graphics):
-    '''Calculate interest for a liability'''
+"""
+JudgmentCalcNV - Complete Nevada Judgment Management System
+Integrates interest calculations with database operations and menu system
+"""
+
+import mysql.connector
+from datetime import date, datetime
+import decimal
+import matplotlib.pyplot as plt
+
+# Database Configuration
+DB_CONFIG = {
+    'host': 'database-1.ctnfprzjtuyt.us-east-1.rds.amazonaws.com',
+    'user': 'admin',
+    'password': 'Dnnbmstn1jrg',
+    'database': 'DataWarehouse',
+    'port': 3306
+}
+
+DEFAULT_ADDITIONAL_POINTS = 0.0
+
+# Database Connection Functions
+def get_database_connection():
+    """Create and return database connection"""
+    try:
+        connection = mysql.connector.connect(**DB_CONFIG)
+        return connection
+    except mysql.connector.Error as err:
+        print(f"Database connection error: {err}")
+        return None
+
+def get_database_cursor():
+    """Get database cursor"""
+    connection = get_database_connection()
+    if connection:
+        return connection.cursor(), connection
+    return None, None
+
+# Interest Calculation Functions
+def get_interest_rates():
+    """Get predefined interest rates for different liability types"""
+    interest_rates = {
+        'liability1': 0.05,
+        'liability2': 0.08,
+        'damages': 0.06,
+        'fees': 0.07,
+        'costs': 0.05,
+        # Add more liability-item interest rates as needed
+    }
+    return interest_rates
+
+def calculate_total_interest(principal_amount, applicable_interest_rate, start_of_segment, end_of_segment, compounding=True):
+    """Calculate total interest for a given period"""
+    days_in_segment = (end_of_segment - start_of_segment).days
+    
+    if compounding:
+        total_interest = principal_amount * (1 + applicable_interest_rate / 365) ** days_in_segment - principal_amount
+    else:
+        total_interest = principal_amount * applicable_interest_rate * (days_in_segment / 365)
+
+    return total_interest
+
+def calculate_simple_interest(principal_amount, interest_rate, start_date, end_date):
+    """Calculate simple interest"""
+    days_in_period = (end_date - start_date).days
+    return principal_amount * interest_rate * (days_in_period / 365)
+
+def calculate_compounding_interest(principal_amount, interest_rate, start_date, end_date, compounding_period):
+    """Calculate compound interest"""
+    days_in_period = (end_date - start_date).days
+    compounding_periods = days_in_period // compounding_period
+    total_interest = principal_amount * (1 + interest_rate / 365 / 100) ** compounding_periods - principal_amount
+    return total_interest
+
+def update_case_details(case_number, liability_name, principal_amount, start_of_segment, end_of_segment, total_interest, compounding=True):
+    """Display calculated interest details"""
+    print("\n" + "="*70)
+    print(f"INTEREST CALCULATION RESULTS - Case {case_number}")
+    print("="*70)
+    print(f"Liability: {liability_name}")
+    print(f"Principal Amount: ${principal_amount:,.2f}")
+    print(f"Interest Rate: {get_interest_rates().get(liability_name, 0.0):.2%}")
+    print(f"Start Date: {start_of_segment}")
+    print(f"End Date: {end_of_segment}")
+    print(f"Days in Period: {(end_of_segment - start_of_segment).days}")
+    print(f"Total {'Compounding' if compounding else 'Simple'} Interest: ${total_interest:,.2f}")
+    print(f"Total Amount Due: ${principal_amount + total_interest:,.2f}")
+    print("="*70)
+
+def save_calculation_to_database(case_number, liability_name, principal_amount, interest_amount, calculation_date):
+    """Save interest calculation results to database"""
+    cursor, connection = get_database_cursor()
+    
+    if cursor:
+        try:
+            # Get case ID
+            cursor.execute("SELECT caseID FROM CASES WHERE caseNumber = %s", (case_number,))
+            case_result = cursor.fetchone()
+            
+            if case_result:
+                case_id = case_result[0]
+                
+                # Insert calculation record (you might need to create a CALCULATIONS table)
+                insert_query = """
+                INSERT INTO CALCULATIONS (caseID, liability_name, principal_amount, 
+                interest_amount, calculation_date) 
+                VALUES (%s, %s, %s, %s, %s)
+                """
+                cursor.execute(insert_query, (case_id, liability_name, principal_amount, 
+                                            interest_amount, calculation_date))
+                connection.commit()
+                print("Calculation saved to database successfully.")
+            else:
+                print(f"Case {case_number} not found in database.")
+                
+        except mysql.connector.Error as err:
+            print(f"Error saving calculation: {err}")
+        finally:
+            cursor.close()
+            connection.close()
+
+def calculate_contractual_interest(case_number):
+    """Calculate contractual interest with database integration"""
+    print(f"\n--- CONTRACTUAL INTEREST CALCULATION FOR CASE {case_number} ---")
+    
+    # Check if case exists in database
+    if not verify_case_exists(case_number):
+        print(f"Warning: Case {case_number} not found in database.")
+        create_new = input("Would you like to create this case? (yes/no): ").lower()
+        if create_new == 'yes':
+            create_case_simple(case_number)
+        else:
+            return
+    
+    # Collect user input for judgment details
+    judgment_date_input = input("Has a judgment been entered? (yes/no): ").lower()
+    
+    if judgment_date_input == 'yes':
+        judgment_date = date.fromisoformat(input("Enter the judgment date (YYYY-MM-DD): "))
+    else:
+        judgment_date = None
+
+    # Collect additional user input
+    interest_type = input("Enter interest type (simple/compounding): ").lower()
+
+    if interest_type not in {'simple', 'compounding'}:
+        print("Invalid interest type. Please enter either 'simple' or 'compounding'.")
+        return
 
     try:
-        # Retrieve case ID based on the provided case number
-        cursor.execute("SELECT caseID FROM CASES WHERE caseNumber = %s", (casenumber,))
-        case_id = cursor.fetchone()
+        principal_amount = float(input("Enter the principal amount: "))
+        start_date = date.fromisoformat(input("Enter the start date (YYYY-MM-DD): "))
+        end_date = date.fromisoformat(input("Enter the end date (YYYY-MM-DD): "))
+        interest_rate = float(input("Enter the interest rate (as decimal, e.g., 0.08 for 8%): "))
+    except ValueError:
+        print("Error: Invalid input. Please enter valid numbers and dates.")
+        return
 
-        if case_id:
-            case_id = case_id[0]
+    if start_date >= end_date:
+        print("Error: Start date must be before end date.")
+        return
 
-            # Fetch liabilities related to the given case number
-            cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
-            liabilities = cursor.fetchall()
+    # Calculate interest based on user input
+    if interest_type == 'compounding':
+        compounding_period = int(input("Enter the compounding period (in days): "))
+        total_interest = calculate_compounding_interest(principal_amount, interest_rate, start_date, end_date, compounding_period)
+    else:
+        total_interest = calculate_simple_interest(principal_amount, interest_rate, start_date, end_date)
 
-            if not liabilities:
-                click.echo(f"No liabilities found for case '{casenumber}'.")
-            else:
-                click.echo(f"Liabilities associated with case '{casenumber}':")
-                for index, liability in enumerate(liabilities, start=1):
-                    click.echo(f"{index}. Incurred Date: {liability[3]} | Amount: {liability[4]} | Description: {liability[5]} | Interest Type: {liability[6]} | Judgment Date: {liability[8]}")
-                
-                liability_choice = click.prompt('Enter the number of the liability to calculate interest', type=int)
-                selected_liability = liabilities[liability_choice - 1] if 1 <= liability_choice <= len(liabilities) else None
-                
-                if selected_liability:
-                    # Define start date and end date for interest calculation
-                    start_date = selected_liability[3]
-                    
-
-                    # Use default start date and prompt for statutory date if interest type is statutory
-                    if selected_liability[6] == 'statutory':
-                        statutory_date_input = click.prompt('Enter statutory date for interest calculation (YYYY-MM-DD)', default=start_date, type=str)
-                        statutory_date_end_input = click.prompt('Enter end date of term (YYYY-MM-DD)', default=dt.today().strftime('%Y-%m-%d'), type=str)
-                        statutory_date = dt.strptime(statutory_date_input, '%Y-%m-%d').date()
-                        if statutory_date < start_date:
-                            click.echo("Statutory date cannot be before the incurred date.")
-                            return
-                        start_date = statutory_date
-                        end_date = statutory_date_end_input
-                            # Fetch interest rates within the specified interval from the INTEREST table
-                        cursor.execute("SELECT date, interest FROM INTEREST WHERE date BETWEEN %s AND %s", (start_date, end_date))
-                        interest_rates = cursor.fetchall()
-                                        
-                        # Perform interest calculation based on fetched rates
-                        total_interest = decimal.Decimal('0.0')
-                        prev_date = start_date
-                        for rate_date, rate in interest_rates:
-                            if rate_date > start_date:
-                                days_diff = (rate_date - prev_date).days
-                                rate_decimal = decimal.Decimal(str(rate)) / 365  # Convert rate to Decimal
-                                interest_amount = selected_liability[4] * rate_decimal * days_diff
-                                total_interest += interest_amount
-                                prev_date = rate_date
-                                        
-
-                    elif selected_liability[6] == 'contractual' and selected_liability[8]:
-                        accounting_interest = decimal.Decimal(str(selected_liability[7]))
-
-                        # Define start date and end date for interest calculation
-                        contractual_date_input = click.prompt('Enter contractual start date for interest calculation (YYYY-MM-DD)', default=start_date, type=str)
-                        contractual_date_end_input = click.prompt('Enter end date of term (YYYY-MM-DD)', default=dt.today().strftime('%Y-%m-%d'), type=str)
-
-                        # Validate date inputs
-                        start_date = dt.strptime(contractual_date_input, '%Y-%m-%d').date()
-                        end_date = dt.strptime(contractual_date_end_input, '%Y-%m-%d').date()
-
-                        if start_date > end_date:
-                            click.echo("Contractual date cannot be after the end date.")
-                            return
-
-                        # Calculate interest based on accounting interest before judgment date
-                        total_interest = decimal.Decimal('0.0')
-                        prev_date = start_date
-
-                        # If judgment date exists, split the interest calculation
-                        if selected_liability[8] >= end_date:
-                            accounting_interest = decimal.Decimal(str(selected_liability[7]))
-                            # Calculate interest based on accounting interest
-                    
-                        
-                            days_diff = (end_date - start_date).days
-
-                            interest_rate = accounting_interest / 365
-                            interest_amount = selected_liability[4] * interest_rate * days_diff
-                            total_interest += interest_amount
-
-                            click.echo(f"Total interest calculated: {total_interest}")
-                        else:
-                    
-                            prev_date = start_date
-
-                            # If judgment date exists, split the interest calculation
-                            
-                            judgment_date = selected_liability[8]
-                            if start_date < judgment_date:
-                                days_diff = (judgment_date - prev_date).days
-                                interest_rate = accounting_interest / 365
-                                interest_amount = selected_liability[4] * interest_rate * days_diff
-                                total_interest += interest_amount
-                                prev_date = judgment_date
-
-                            # Calculate interest based on statutory rates after judgment date
-                            days_diff = (end_date - prev_date).days
-                            cursor.execute("SELECT date, interest FROM INTEREST WHERE date BETWEEN %s AND %s", (prev_date, end_date))
-                            interest_rates_after = cursor.fetchall()
-
-                            for rate_date, rate in interest_rates_after:
-                                days_diff = (rate_date - prev_date).days
-                                rate_decimal = decimal.Decimal(str(rate)) / 365  # Convert rate to Decimal
-                                interest_amount = selected_liability[4] * rate_decimal * days_diff
-                                click.echo(f"Interest amount: {interest_amount}")
-                                total_interest += interest_amount
-                                prev_date = rate_date
-
-
-                    
-
-                    elif selected_liability[6] == 'contractual':
-                        accounting_interest = decimal.Decimal(str(selected_liability[7]))
-
-                        # Define start date and end date for interest calculation
-                        contractual_date_input = click.prompt('Enter contractual start date for interest calculation (YYYY-MM-DD)', default=start_date, type=str)
-                        contractual_date_end_input = click.prompt('Enter end date of term (YYYY-MM-DD)', default=dt.today().strftime('%Y-%m-%d'), type=str)
-                        
-                        # Validate date inputs
-                        start_date = dt.strptime(contractual_date_input, '%Y-%m-%d').date()
-                        end_date = dt.strptime(contractual_date_end_input, '%Y-%m-%d').date()
-                        if start_date > end_date:
-                            click.echo("Contractual date cannot be after the end date.")
-                            return   
-
-                        # Calculate interest based on accounting interest
-                        total_interest = decimal.Decimal('0.0')
-                        prev_date = start_date
-                        days_diff = (end_date - start_date).days
-
-                        interest_rate = accounting_interest / 365
-                        interest_amount = selected_liability[4] * interest_rate * days_diff
-                        total_interest += interest_amount
-
-                        click.echo(f"Total interest calculated: {total_interest}")
-
-
-                    
-
-
-                    
-                    
-
-
-
-                    # Fetch involved parties from CLIENTS table
-                    cursor.execute("SELECT * FROM CLIENTS WHERE caseID = %s", (case_id,))
-                    involved_parties = cursor.fetchall()
-
-                    # Display report with involved parties, liability details, and total interest
-                    click.echo("\nReport:")
-                    #add break line
-                    click.echo("-------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                    for party in involved_parties:
-                        click.echo(f"Involved Party: {party[1]} {party[2]} | Type: {party[3]}")
-
-                    #add break line
-                    click.echo("-------------------------------------------------------------------------------------------------------------------------------------------------------------------")
-                    click.echo(f"Liability ID: {selected_liability[0]} | Principal Amount: {selected_liability[4]} | Period: {start_date} to {end_date} | Total Interest: {total_interest}")
-                    click.echo(f"Total interest calculated: {total_interest}")
-                    if graphics:
-                    # Create a pie chart for total interest and principal amount
-                        labels = ['Principal Amount', 'Total Interest']
-                        amounts = [float(selected_liability[4]), float(total_interest)]
-                        explode = (0, 0.1)  # "explode" the Total Interest slice
-
-                       
-                        plt.pie(amounts, explode=explode, labels=labels, autopct='%1.1f%%', shadow=True, startangle=140)
-                        plt.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-                        plt.title('Principal Amount vs Total Interest')
-                        plt.show()
-                        (plt.savefig('plot.png'))
-
-                    else:
-                        click.echo("Pie chart visualization not enabled.")
-                                
-                
-                else:
-                    click.echo("Invalid liability choice.")
-
-        else:
-            click.echo(f"Case '{casenumber}' not found.")
+    # Display the result
+    print("\n" + "="*70)
+    print("CONTRACTUAL INTEREST CALCULATION RESULTS")
+    print("="*70)
+    print(f"Case Number: {case_number}")
+    print(f"Principal Amount: ${principal_amount:,.2f}")
+    print(f"Interest Rate: {interest_rate:.2%}")
+    print(f"Interest Type: {interest_type.capitalize()}")
+    print(f"Start Date: {start_date}")
+    print(f"End Date: {end_date}")
+    print(f"Days in Period: {(end_date - start_date).days}")
+    print(f"Total Interest: ${total_interest:,.2f}")
+    print(f"Total Amount Due: ${principal_amount + total_interest:,.2f}")
     
-    except mysql.connector.Error as err:
-        click.echo(f"Error: {err}")
+    if judgment_date:
+        print(f"Judgment Date: {judgment_date}")
+    
+    print("="*70)
 
+    # Ask if user wants to save to database
+    save_to_db = input("\nWould you like to save this calculation to the database? (yes/no): ").lower()
+    if save_to_db == 'yes':
+        save_calculation_to_database(case_number, "contractual", principal_amount, total_interest, datetime.now())
+    
+    # Ask if user wants visualization
+    show_chart = input("Would you like to see a pie chart visualization? (yes/no): ").lower()
+    if show_chart == 'yes':
+        create_interest_visualization(principal_amount, total_interest, f"Contractual Interest - Case {case_number}")
+
+def calculate_statutory_interest(case_number):
+    """Calculate statutory interest with database integration"""
+    print(f"\n--- STATUTORY INTEREST CALCULATION FOR CASE {case_number} ---")
+    
+    # Check if case exists in database
+    if not verify_case_exists(case_number):
+        print(f"Warning: Case {case_number} not found in database.")
+        create_new = input("Would you like to create this case? (yes/no): ").lower()
+        if create_new == 'yes':
+            create_case_simple(case_number)
+        else:
+            return
+    
+    while True:
+        # Strip leading and trailing spaces from the entered liability name
+        liability_name = input("Enter the name of the liability (or type 'exit' to finish): ").strip().lower()
+
+        if liability_name == 'exit':
+            break
+
+        try:
+            principal_amount = float(input("Enter the principal amount: "))
+            start_of_segment = date.fromisoformat(input("Enter the start date of the segment (YYYY-MM-DD): "))
+            end_of_segment = date.fromisoformat(input("Enter the end date of the segment (YYYY-MM-DD): "))
+        except ValueError:
+            print("Error: Invalid input. Please enter numeric values for the principal amount and valid dates.")
+            continue
+
+        if end_of_segment <= start_of_segment:
+            print("Error: End date must be after the start date.")
+            continue
+
+        interest_rates = get_interest_rates()
+
+        # Check if liability name is valid
+        if liability_name not in interest_rates:
+            print(f"Available liability types: {', '.join(interest_rates.keys())}")
+            print("Error: Invalid liability name. Please enter a valid liability name.")
+            continue
+
+        applicable_interest_rate = interest_rates[liability_name]
+
+        additional_points = float(input(f"Enter additional points above the base rate for {liability_name} (default is {DEFAULT_ADDITIONAL_POINTS}): ") or DEFAULT_ADDITIONAL_POINTS)
+
+        compounding_option = input("Choose interest calculation type (C for Compound, S for Simple, default is Compound): ").upper()
+        compounding = compounding_option != 'S'  # Default to compound unless 'S' is explicitly chosen
+
+        total_interest = calculate_total_interest(principal_amount, applicable_interest_rate + (additional_points/100), start_of_segment, end_of_segment, compounding)
+
+        update_case_details(case_number, liability_name, principal_amount, start_of_segment, end_of_segment, total_interest, compounding)
+        
+        # Ask if user wants to save to database
+        save_to_db = input("Would you like to save this calculation to the database? (yes/no): ").lower()
+        if save_to_db == 'yes':
+            save_calculation_to_database(case_number, liability_name, principal_amount, total_interest, datetime.now())
+        
+        # Ask if user wants visualization
+        show_chart = input("Would you like to see a pie chart visualization? (yes/no): ").lower()
+        if show_chart == 'yes':
+            create_interest_visualization(principal_amount, total_interest, f"Statutory Interest - Case {case_number} - {liability_name}")
+
+def create_interest_visualization(principal_amount, interest_amount, title):
+    """Create pie chart visualization of principal vs interest"""
+    try:
+        labels = ['Principal Amount', 'Interest Amount']
+        amounts = [float(principal_amount), float(interest_amount)]
+        colors = ['lightblue', 'lightcoral']
+        explode = (0, 0.1)  # "explode" the interest slice
+        
+        plt.figure(figsize=(10, 8))
+        plt.pie(amounts, explode=explode, labels=labels, colors=colors, autopct='%1.1f%%', 
+                shadow=True, startangle=90)
+        plt.axis('equal')
+        plt.title(title, fontsize=14, fontweight='bold')
+        
+        # Add text box with amounts
+        textstr = f'Principal: ${principal_amount:,.2f}\nInterest: ${interest_amount:,.2f}\nTotal: ${principal_amount + interest_amount:,.2f}'
+        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        plt.text(0.02, 0.98, textstr, transform=plt.gca().transAxes, fontsize=10,
+                verticalalignment='top', bbox=props)
+        
+        plt.tight_layout()
+        plt.show()
+        
+    except Exception as e:
+        print(f"Error creating visualization: {e}")
+
+# Database Helper Functions
+def verify_case_exists(case_number):
+    """Check if a case exists in the database"""
+    cursor, connection = get_database_cursor()
+    
+    if cursor:
+        try:
+            cursor.execute("SELECT caseID FROM CASES WHERE caseNumber = %s", (case_number,))
+            result = cursor.fetchone()
+            return result is not None
+        except mysql.connector.Error as err:
+            print(f"Error checking case: {err}")
+            return False
+        finally:
+            cursor.close()
+            connection.close()
+    
+    return False
+
+def create_case_simple(case_number):
+    """Create a simple case entry"""
+    cursor, connection = get_database_cursor()
+    
+    if cursor:
+        try:
+            create_date = datetime.now()
+            cursor.execute("INSERT INTO CASES (caseNumber, createDate, updateDate) VALUES (%s, %s, %s)", 
+                          (case_number, create_date, create_date))
+            connection.commit()
+            print(f"Case '{case_number}' created successfully.")
+            return True
+        except mysql.connector.Error as err:
+            print(f"Error creating case: {err}")
+            return False
+        finally:
+            cursor.close()
+            connection.close()
+    
+    return False
+
+# Main Application
+def main_menu():
+    """Display the main menu and handle user choices"""
+    
+    while True:
+        print("\n" + "="*60)
+        print("          JUDGMENT MANAGEMENT SYSTEM FOR NEVADA")
+        print("="*60)
+        print("1.  Calculate Interest")
+        print("2.  View Interest Rates")
+        print("3.  Database Status Check")
+        print("4.  Quit")
+        print("="*60)
+        
+        try:
+            choice = input("Enter your choice (1-4): ").strip()
+            
+            if choice == '1':
+                calculate_interest_menu()
+            elif choice == '2':
+                display_interest_rates()
+            elif choice == '3':
+                check_database_status()
+            elif choice == '4':
+                print("Thank you for using Judgment Management System. Goodbye!")
+                break
+            else:
+                print("Invalid choice. Please enter a number between 1 and 4.")
+                
+        except KeyboardInterrupt:
+            print("\n\nProgram interrupted. Goodbye!")
+            break
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
+def calculate_interest_menu():
+    """Interest calculation menu"""
+    print("\n--- INTEREST CALCULATION ---")
+    case_number = input("Enter the case number: ").strip()
+    
+    if not case_number:
+        print("Case number cannot be empty.")
+        return
+    
+    has_interest = input("Is there interest associated with the liability item? (yes/no): ").lower().strip()
+    
+    if has_interest == 'yes':
+        interest_type = input("Choose interest type (contractual/statutory): ").lower().strip()
+        
+        if interest_type == 'contractual':
+            calculate_contractual_interest(case_number)
+        elif interest_type == 'statutory':
+            calculate_statutory_interest(case_number)
+        else:
+            print("Invalid interest type. Please enter either 'contractual' or 'statutory'.")
+    else:
+        print("No interest associated with the liability item.")
+
+def display_interest_rates():
+    """Display available interest rates"""
+    print("\n--- AVAILABLE INTEREST RATES ---")
+    rates = get_interest_rates()
+    
+    for liability_type, rate in rates.items():
+        print(f"{liability_type.capitalize()}: {rate:.2%}")
+    
+    print(f"\nDefault additional points: {DEFAULT_ADDITIONAL_POINTS}")
+
+def check_database_status():
+    """Check database connection and basic info"""
+    print("\n--- DATABASE STATUS CHECK ---")
+    
+    cursor, connection = get_database_cursor()
+    
+    if cursor:
+        try:
+            # Check connection
+            cursor.execute("SELECT 1")
+            print("✓ Database connection successful")
+            
+            # Check tables exist
+            tables = ['CASES', 'CLIENTS', 'ACCOUNTING', 'INTEREST']
+            for table in tables:
+                cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                count = cursor.fetchone()[0]
+                print(f"✓ {table} table: {count} records")
+                
+        except mysql.connector.Error as err:
+            print(f"✗ Database error: {err}")
+        finally:
+            cursor.close()
+            connection.close()
+    else:
+        print("✗ Could not connect to database")
+
+# Run the application
+if __name__ == "__main__":
+    print("Starting Judgment Management System for Nevada...")
+    try:
+        main_menu()
+    except Exception as e:
+        print(f"Fatal error: {e}")
+        print("Program terminated.")
