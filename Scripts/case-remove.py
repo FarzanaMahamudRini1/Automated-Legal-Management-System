@@ -1,32 +1,66 @@
-   
-@cli.command()
-@click.option('--case-number', prompt='Enter case number', help='Case number to remove')
-@click.confirmation_option(prompt='Are you sure you want to remove this case?')
-@click.option('--remove-clients', is_flag=True, default=False, help='Remove associated clients')
-@click.option('--remove-liabilities', is_flag=True, default=False, help='Remove associated liabilities')
-def case_remove(case_number, remove_clients, remove_liabilities):
-    """This is a mini documenation for the command"""
+def case_remove():
+    """Remove a case and optionally its associated data"""
+    print("\n--- REMOVE CASE ---")
+    
+    # Get case number
+    case_number = input('Enter case number to remove: ').strip()
+    if not case_number:
+        print("Case number cannot be empty.")
+        return
+    
+    # Confirm removal
+    confirmation = input(f"Are you sure you want to remove case '{case_number}'? (yes/no): ").lower().strip()
+    if confirmation != 'yes':
+        print("Case removal cancelled.")
+        return
+    
+    # Ask about removing associated data
+    remove_clients = input("Remove associated clients? (yes/no): ").lower().strip() == 'yes'
+    remove_liabilities = input("Remove associated liabilities? (yes/no): ").lower().strip() == 'yes'
+    
+    # Get database connection
+    cursor, connection = get_database_cursor()
+    if not cursor:
+        print("Database connection failed.")
+        return
+    
     try:
-        cursor.execute("SET FOREIGN_KEY_CHECKS=0")  # Disable foreign key checks
+        # Disable foreign key checks
+        cursor.execute("SET FOREIGN_KEY_CHECKS=0")
+        
+        # Check if case exists
         cursor.execute("SELECT caseID FROM CASES WHERE caseNumber = %s", (case_number,))
-        case_id = cursor.fetchone()
-        if case_id:
-            case_id = case_id[0]
+        case_result = cursor.fetchone()
+        
+        if case_result:
+            case_id = case_result[0]
+            
+            # Remove associated clients if requested
             if remove_clients:
                 cursor.execute("DELETE FROM CLIENTS WHERE caseID = %s", (case_id,))
-                conn.commit()
-                click.echo(f"All clients associated with case '{case_number}' removed.")
+                connection.commit()
+                print(f"All clients associated with case '{case_number}' removed.")
+            
+            # Remove associated liabilities if requested
             if remove_liabilities:
                 cursor.execute("DELETE FROM ACCOUNTING WHERE caseID = %s", (case_id,))
-                conn.commit()
-                click.echo(f"All liabilities associated with case '{case_number}' removed.")
+                connection.commit()
+                print(f"All liabilities associated with case '{case_number}' removed.")
+            
+            # Remove the case itself
             cursor.execute("DELETE FROM CASES WHERE caseID = %s", (case_id,))
-            conn.commit()
-            click.echo(f"Case '{case_number}' removed.")
+            connection.commit()
+            print(f"Case '{case_number}' removed successfully.")
+            
         else:
-            click.echo(f"Case '{case_number}' not found.")
-    except mysql.connector.Error as err:
-        click.echo(f"Error: {err}")
+            print(f"Case '{case_number}' not found.")
+    
+    except Exception as e:
+        print(f"Error: {e}")
+        connection.rollback()
+    
     finally:
-        cursor.execute("SET FOREIGN_KEY_CHECKS=1")  # Re-enable foreign key checks
-        conn.close()
+        # Re-enable foreign key checks
+        cursor.execute("SET FOREIGN_KEY_CHECKS=1")
+        cursor.close()
+        connection.close()
