@@ -1,133 +1,159 @@
-@cli.command()
-@click.option('--add', is_flag=True, default=False, help='Add liabilities by case number')
-@click.option('--remove', is_flag=True, default=False, help='Remove liabilities by case number')
-@click.option('--view', is_flag=True, default=False, help='View liabilities by case number')
-@click.option('--judgment-date', is_flag=True, default=False, help='Update judgment date for existing liability')
-@click.option('--case-number', help='Specify case number')
-def liabilities(add, remove, view, case_number, judgment_date):
-    '''Manage liabilities by case number'''
+from datetime import datetime as dt
+from database_config import get_database_cursor  # Your DB helpers
+
+def manage_liabilities(case_number=None, add=False, remove=False, view=False, update_judgment=False):
+    """
+    Manage liabilities by case number.
+
+    Parameters:
+        case_number (str): Case number (2 letters + 8-10 characters)
+        add (bool): Add new liabilities
+        remove (bool): Remove existing liabilities
+        view (bool): View liabilities
+        update_judgment (bool): Update judgment date for liabilities
+    """
+    cursor, conn = get_database_cursor()
+    if not cursor:
+        print("Failed to get database cursor.")
+        return
+
     try:
-        case_number = click.prompt('Enter case number (2 letters, 8-10 characters)', type=str)
+        # Prompt for case number if not provided
+        if not case_number:
+            case_number = input("Enter case number (2 letters, 8-10 characters): ").strip()
+
+        # Validate case number
         if not (len(case_number) >= 8 and len(case_number) <= 10 and case_number[:2].isalpha()):
-            click.echo("Invalid case number. It should start with 2 letters and have 8-10 characters.")
+            print("Invalid case number. It should start with 2 letters and have 8-10 characters.")
             return
 
+        # Get case ID
         cursor.execute("SELECT caseID FROM CASES WHERE caseNumber = %s", (case_number,))
-        case_id = cursor.fetchone()
+        case_id_result = cursor.fetchone()
+        if not case_id_result:
+            print(f"Case '{case_number}' not found.")
+            return
+        case_id = case_id_result[0]
 
-        if case_id:
-            case_id = case_id[0]
+        # --- ADD LIABILITY ---
+        if add:
+            while True:
+                while True:
+                    incurred_date = input("Enter incurred date (YYYY-MM-DD): ").strip()
+                    try:
+                        dt.strptime(incurred_date, "%Y-%m-%d")
+                        break
+                    except ValueError:
+                        print("Invalid date format. Please use YYYY-MM-DD.")
+                
+                amount = float(input("Enter amount: ").strip())
+                description = input("Enter description: ").strip()
 
-            if add:
-               while True:
+                # Interest type
+                interest_type = input("Enter interest type (contractual/statutory) [contractual]: ").strip() or "contractual"
+                while interest_type.lower() not in ("contractual", "statutory"):
+                    print("Interest type must be 'contractual' or 'statutory'.")
+                    interest_type = input("Enter interest type (contractual/statutory) [contractual]: ").strip() or "contractual"
+
+                # Contractual interest
+                contractual_interest = None
+                if interest_type.lower() == "contractual":
                     while True:
-                        incurred_date = click.prompt('Enter incurred date (YYYY-MM-DD)', type=str)
+                        contractual_interest = float(input("Enter contractual interest (0 to 1): ").strip())
+                        if 0 <= contractual_interest <= 1:
+                            break
+                        print("Contractual interest must be between 0 and 1.")
+
+                # Judgment date
+                has_judgment = input("Is there a judgment for this liability? (yes/no): ").strip().lower() == "yes"
+                judgment_date = None
+                if has_judgment:
+                    while True:
+                        judgment_input = input("Enter judgment date (YYYY-MM-DD): ").strip()
                         try:
-                            dt.strptime(incurred_date, '%Y-%m-%d')
+                            judgment_date = dt.strptime(judgment_input, "%Y-%m-%d").date()
+                            break
                         except ValueError:
-                            click.echo("Invalid date format. Please use YYYY-MM-DD format.")
-                            continue
-                        break
-                    amount = click.prompt('Enter amount', type=float)
-                    description = click.prompt('Enter description', type=str)
-                    interest_type = click.prompt('Enter interest type (contractual or statutory)', type=str,
-                                            default='contractual', show_default=True)
-                    while interest_type.lower() not in ('contractual', 'statutory'):
-                        click.echo("Interest type can only be 'contractual' or 'statutory'.")
-                        interest_type = click.prompt('Enter interest type (contractual or statutory)', type=str,
-                                                default='contractual', show_default=True)
-                    contractualinterest = None  # Initialize contractualinterest variable
+                            print("Invalid date format. Please use YYYY-MM-DD.")
 
-                    if interest_type.lower() == 'contractual':
-                        while True:
-                            contractualinterest = click.prompt('Enter contractual interest (between 0 and 1)', type=float)
-                            if 0 <= contractualinterest <= 1:
-                                break
-                            else:
-                                click.echo("Contractual interest should be between 0 and 1.")
-                    has_judgment = click.confirm('Is there a judgment for this liability?')
-                    if has_judgment:
-                        while True:
-                            judgment_date = click.prompt('Enter judgment date (YYYY-MM-DD)', type=str)
-                            try:
-                                judgment_date = dt.strptime(judgment_date, '%Y-%m-%d').date()
-                                break
-                            except ValueError:
-                                click.echo("Invalid date format. Please use YYYY-MM-DD format.")            
-                    cursor.execute("INSERT INTO ACCOUNTING (caseID, type, incurredDate, amount, description, interestType, interest,judgmentDate) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                                (case_id, 'liability', incurred_date, amount, description, interest_type, contractualinterest, judgment_date if has_judgment else None))
-                    conn.commit()
-                    click.echo("Liability added to the case.")
-                    add_another_liability = click.confirm('Add another liability?')
-                    if not add_another_liability:
-                        break
+                # Insert liability
+                cursor.execute("""
+                    INSERT INTO ACCOUNTING
+                    (caseID, type, incurredDate, amount, description, interestType, interest, judgmentDate)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (case_id, "liability", incurred_date, amount, description, interest_type,
+                      contractual_interest, judgment_date))
+                conn.commit()
+                print("Liability added successfully.")
 
-                  
+                add_another = input("Add another liability? (yes/no): ").strip().lower() == "yes"
+                if not add_another:
+                    break
 
-            elif remove:
-                # Remove liabilities associated with the case
-                cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
-                liabilities = cursor.fetchall()
-                if not liabilities:
-                    click.echo(f"No liabilities found for case '{case_number}'.")
-                else:
-                    click.echo(f"Liabilities associated with case '{case_number}':")
-                    for index, liability in enumerate(liabilities, start=1):
-                        click.echo(f"{index}. {liability[0]} - {liability[2]}, {liability[3]}, {liability[4]},{liability[5]}")
-                    liability_choice = click.prompt('Enter the number of the liability to remove', type=int)
-                    if 1 <= liability_choice <= len(liabilities):
-                        liability_to_remove = liabilities[liability_choice - 1]
-                        cursor.execute("DELETE FROM ACCOUNTING WHERE accountingID = %s AND caseID = %s",
-                                       (liability_to_remove[0], case_id))
-                        conn.commit()
-                        click.echo(f"Removing liability: {liability_to_remove[0]} - {liability_to_remove[2]} - {liability_to_remove[3]} - {liability_to_remove[4]} - {liability_to_remove[5]}")
-                    else:
-                        click.echo("Invalid liability choice.")
-            elif view:
-                # View liabilities associated with the case
-                cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
-                liabilities = cursor.fetchall()
-                if not liabilities:
-                    click.echo("No liabilities found for this case.")
-                else:
-                    click.echo(f"Liabilities associated with case '{case_number}':")
-                    # Display attribute titles
-                    attributes = [desc[0] for desc in cursor.description]
-                    click.echo(attributes)
-                    # Display liabilities
-                    for liability in liabilities:
-                        click.echo(liability)
-            elif judgment_date:
-                # Update judgment date for existing liability
-                cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
-                liabilities = cursor.fetchall()
-                if not liabilities:
-                    click.echo("No liabilities found for this case.")
-                else:
-                    click.echo(f"Liabilities associated with case '{case_number}':")
-                    for index, liability in enumerate(liabilities, start=1):
-                        click.echo(f"{index}. {liability[0]} - {liability[2]}, {liability[3]}, {liability[4]},{liability[5]}")
-                    
-                    liability_choice = click.prompt('Enter the number of the liability to update judgment date', type=int)
-                    if 1 <= liability_choice <= len(liabilities):
-                        liability_to_update = liabilities[liability_choice - 1]
-                        new_judgment_date = click.prompt('Enter new judgment date (YYYY-MM-DD)', type=str)
-                        try:
-                            new_judgment_date = dt.strptime(new_judgment_date, '%Y-%m-%d').date()
-                            cursor.execute("UPDATE ACCOUNTING SET judgmentDate = %s WHERE accountingID = %s",
-                                           (new_judgment_date, liability_to_update[0]))
-                            conn.commit()
-                            click.echo(f"Updated judgment date for liability: {liability_to_update[0]}")
-                        except ValueError:
-                            click.echo("Invalid date format. Please use YYYY-MM-DD format.")
-                    else:
-                        click.echo("Invalid liability choice.")
+        # --- REMOVE LIABILITY ---
+        if remove:
+            cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
+            liabilities = cursor.fetchall()
+            if not liabilities:
+                print(f"No liabilities found for case '{case_number}'.")
             else:
-                click.echo("Please specify an action: add, remove, or view liabilities.")
+                print(f"Liabilities for case '{case_number}':")
+                for idx, liab in enumerate(liabilities, 1):
+                    print(f"{idx}. ID {liab[0]}, Date {liab[2]}, Amount {liab[3]}, Desc {liab[4]}, Type {liab[5]}")
 
-        else:
-            click.echo(f"Case '{case_number}' not found.")
-    except mysql.connector.Error as err:
-        click.echo(f"Error: {err}")
+                choice = int(input("Enter the number of the liability to remove: ").strip())
+                if 1 <= choice <= len(liabilities):
+                    selected = liabilities[choice - 1]
+                    cursor.execute("DELETE FROM ACCOUNTING WHERE accountingID = %s", (selected[0],))
+                    conn.commit()
+                    print(f"Removed liability ID {selected[0]}")
+                else:
+                    print("Invalid choice.")
+
+        # --- VIEW LIABILITIES ---
+        if view:
+            cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
+            liabilities = cursor.fetchall()
+            if not liabilities:
+                print(f"No liabilities found for case '{case_number}'.")
+            else:
+                print(f"Liabilities for case '{case_number}':")
+                columns = [desc[0] for desc in cursor.description]
+                print("Columns:", columns)
+                for liab in liabilities:
+                    print(liab)
+
+        # --- UPDATE JUDGMENT DATE ---
+        if update_judgment:
+            cursor.execute("SELECT * FROM ACCOUNTING WHERE caseID = %s", (case_id,))
+            liabilities = cursor.fetchall()
+            if not liabilities:
+                print(f"No liabilities found for case '{case_number}'.")
+            else:
+                print(f"Liabilities for case '{case_number}':")
+                for idx, liab in enumerate(liabilities, 1):
+                    print(f"{idx}. ID {liab[0]}, Date {liab[2]}, Amount {liab[3]}, Desc {liab[4]}, Type {liab[5]}")
+
+                choice = int(input("Enter the number of the liability to update judgment date: ").strip())
+                if 1 <= choice <= len(liabilities):
+                    selected = liabilities[choice - 1]
+                    while True:
+                        new_judgment = input("Enter new judgment date (YYYY-MM-DD): ").strip()
+                        try:
+                            new_judgment_date = dt.strptime(new_judgment, "%Y-%m-%d").date()
+                            break
+                        except ValueError:
+                            print("Invalid date format. Use YYYY-MM-DD.")
+
+                    cursor.execute("UPDATE ACCOUNTING SET judgmentDate = %s WHERE accountingID = %s",
+                                   (new_judgment_date, selected[0]))
+                    conn.commit()
+                    print(f"Updated judgment date for liability ID {selected[0]}")
+                else:
+                    print("Invalid choice.")
+
+    except Exception as err:
+        print(f"Error managing liabilities: {err}")
     finally:
-        conn.close()        
+        cursor.close()
+        conn.close()
