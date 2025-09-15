@@ -1,13 +1,23 @@
+from datetime import datetime as dt
+from database_config import get_database_cursor  # Assuming this is the file you shared
 
+def orphaned_entries(list_entries=False, show_attributes=False, remove_entries=False):
+    """
+    Manage orphaned entries in CLIENTS and ACCOUNTING tables.
 
-@cli.command()
-@click.option('--list', is_flag=True, default=False, help='List orphaned entries without deletion')
-@click.option('--show-attributes', is_flag=True, default=False, help='Show attributes of orphaned entries')
-@click.option('--remove', is_flag=True, default=False, help='Remove orphaned entries')
-def orphaned_entries(list, show_attributes,remove):
-    """This is a mini documenation for the command"""
+    Parameters:
+        list_entries (bool): List orphaned entries without deletion
+        show_attributes (bool): Show full attributes of orphaned entries
+        remove_entries (bool): Remove orphaned entries after confirmation
+    """
+    cursor, conn = get_database_cursor()
+    if not cursor:
+        print("Failed to get database cursor.")
+        return
+
     try:
-        if list:
+        # Helper function to fetch orphaned entries
+        def fetch_orphans():
             cursor.execute("""
                 SELECT c.* 
                 FROM CLIENTS c
@@ -24,95 +34,71 @@ def orphaned_entries(list, show_attributes,remove):
             """)
             orphaned_accounting = cursor.fetchall()
 
+            return orphaned_clients, orphaned_accounting
+
+        orphaned_clients, orphaned_accounting = fetch_orphans()
+
+        # LIST orphaned entries
+        if list_entries:
             if not orphaned_clients and not orphaned_accounting:
-                click.echo("No orphaned entries found in CLIENTS and ACCOUNTING tables.")
+                print("No orphaned entries found in CLIENTS or ACCOUNTING tables.")
             else:
-                click.echo("Orphaned entries found:")
+                print("Orphaned entries found:")
                 if orphaned_clients:
-                    click.echo("Orphaned entries in CLIENTS table:")
+                    print("CLIENTS table:")
                     for entry in orphaned_clients:
-                        click.echo(entry)
-
+                        print(f"  - caseID: {entry[0]}")
                 if orphaned_accounting:
-                    click.echo("Orphaned entries in ACCOUNTING table:")
+                    print("ACCOUNTING table:")
                     for entry in orphaned_accounting:
-                        click.echo(entry)
+                        print(f"  - caseID: {entry[0]}")
 
+        # SHOW full attributes
         if show_attributes:
-            cursor.execute("""
-                SELECT c.* 
-                FROM CLIENTS c
-                LEFT JOIN CASES cs ON c.caseID = cs.caseID
-                WHERE cs.caseID IS NULL
-            """)
-            orphaned_clients = cursor.fetchall()
-
-            cursor.execute("""
-                SELECT a.* 
-                FROM ACCOUNTING a
-                LEFT JOIN CASES cs ON a.caseID = cs.caseID
-                WHERE cs.caseID IS NULL
-            """)
-            orphaned_accounting = cursor.fetchall()
-
             if not orphaned_clients and not orphaned_accounting:
-                click.echo("No orphaned entries found in CLIENTS and ACCOUNTING tables.")
+                print("No orphaned entries found in CLIENTS or ACCOUNTING tables.")
             else:
-                click.echo("Orphaned entries and their attributes:")
+                print("Orphaned entries with full attributes:")
                 if orphaned_clients:
-                    click.echo("Orphaned entries in CLIENTS table:")
+                    print("CLIENTS table entries:")
                     for entry in orphaned_clients:
-                        click.echo(f"CLIENTS entry: {entry}")
-
+                        print(f"  - {entry}")
                 if orphaned_accounting:
-                    click.echo("Orphaned entries in ACCOUNTING table:")
+                    print("ACCOUNTING table entries:")
                     for entry in orphaned_accounting:
-                        click.echo(f"ACCOUNTING entry: {entry}")
+                        print(f"  - {entry}")
 
-
-
-        if remove:
-            cursor.execute("""
-                SELECT c.caseID 
-                FROM CLIENTS c
-                LEFT JOIN CASES cs ON c.caseID = cs.caseID
-                WHERE cs.caseID IS NULL
-            """)
-            orphaned_clients = cursor.fetchall()
-
-            cursor.execute("""
-                SELECT a.caseID 
-                FROM ACCOUNTING a
-                LEFT JOIN CASES cs ON a.caseID = cs.caseID
-                WHERE cs.caseID IS NULL
-            """)
-            orphaned_accounting = cursor.fetchall()
-
+        # REMOVE orphaned entries
+        if remove_entries:
             if not orphaned_clients and not orphaned_accounting:
-                click.echo("No orphaned entries found in CLIENTS and ACCOUNTING tables.")
+                print("No orphaned entries to remove.")
             else:
-                click.echo("Orphaned entries found:")
+                # Remove CLIENTS entries
                 if orphaned_clients:
-                    click.echo("Orphaned entries in CLIENTS table:")
+                    print("CLIENTS orphaned entries:")
                     for entry in orphaned_clients:
-                        click.echo(f"CLIENTS entry with caseID: {entry[0]}")
-                    if click.confirm('Do you want to remove orphaned CLIENTS entries?', default=True):
+                        print(f"  - caseID: {entry[0]}")
+                    confirm = input("Do you want to remove these CLIENTS entries? (yes/no): ").strip().lower()
+                    if confirm == "yes":
                         for entry in orphaned_clients:
                             cursor.execute("DELETE FROM CLIENTS WHERE caseID = %s", (entry[0],))
                         conn.commit()
-                        click.echo("Orphaned CLIENTS entries deleted.")
+                        print("CLIENTS orphaned entries deleted.")
 
+                # Remove ACCOUNTING entries
                 if orphaned_accounting:
-                    click.echo("Orphaned entries in ACCOUNTING table:")
+                    print("ACCOUNTING orphaned entries:")
                     for entry in orphaned_accounting:
-                        click.echo(f"ACCOUNTING entry with caseID: {entry[0]}")
-                    if click.confirm('Do you want to remove orphaned ACCOUNTING entries?', default=True):
+                        print(f"  - caseID: {entry[0]}")
+                    confirm = input("Do you want to remove these ACCOUNTING entries? (yes/no): ").strip().lower()
+                    if confirm == "yes":
                         for entry in orphaned_accounting:
                             cursor.execute("DELETE FROM ACCOUNTING WHERE caseID = %s", (entry[0],))
                         conn.commit()
-                        click.echo("Orphaned ACCOUNTING entries deleted.")
+                        print("ACCOUNTING orphaned entries deleted.")
 
-    except mysql.connector.Error as err:
-        click.echo(f"Error: {err}")
+    except Exception as err:
+        print(f"Error while processing orphaned entries: {err}")
     finally:
+        cursor.close()
         conn.close()
