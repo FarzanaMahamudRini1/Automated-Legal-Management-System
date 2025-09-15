@@ -1,33 +1,99 @@
-
-@cli.command()
-@click.option('--case-number', prompt='Enter partial case number to search', help='Partial case number to search')
-@click.option('--start-date', help='Start date (YYYY-MM-DD) to filter cases')
-@click.option('--end-date', help='End date (YYYY-MM-DD) to filter cases')
-def case_search(case_number, start_date, end_date):
+def case_search():
+    """Search for cases by case number and optional date range"""
+    print("\n--- SEARCH CASES ---")
+    
+    # Get case number search term
+    case_number = input('Enter partial case number to search: ').strip()
+    if not case_number:
+        print("Case number cannot be empty.")
+        return
+    
+    # Ask for optional date filtering
+    use_date_filter = input('Would you like to filter by date range? (yes/no): ').lower().strip()
+    
+    start_date = None
+    end_date = None
+    
+    if use_date_filter == 'yes':
+        # Get start date
+        while True:
+            start_date_input = input('Enter start date (YYYY-MM-DD) or press Enter to skip: ').strip()
+            if not start_date_input:
+                break
+            try:
+                start_date = datetime.strptime(start_date_input, '%Y-%m-%d')
+                break
+            except ValueError:
+                print("Invalid date format. Please use YYYY-MM-DD format.")
+        
+        # Get end date
+        while True:
+            end_date_input = input('Enter end date (YYYY-MM-DD) or press Enter to skip: ').strip()
+            if not end_date_input:
+                break
+            try:
+                end_date = datetime.strptime(end_date_input, '%Y-%m-%d')
+                break
+            except ValueError:
+                print("Invalid date format. Please use YYYY-MM-DD format.")
+        
+        # Validate date range
+        if start_date and end_date and start_date > end_date:
+            print("Start date cannot be after end date.")
+            return
+    
+    # Get database connection
+    cursor, connection = get_database_cursor()
+    if not cursor:
+        print("Database connection failed.")
+        return
+    
     try:
+        # Build query with optional date filtering
         query = "SELECT * FROM CASES WHERE caseNumber LIKE %s"
         params = ('%' + case_number + '%',)
-
+        
         if start_date and end_date:
-            start_datetime = dt.strptime(start_date, '%Y-%m-%d')
-            end_datetime = dt.strptime(end_date, '%Y-%m-%d')
             query += " AND createDate BETWEEN %s AND %s"
-            params += (start_datetime, end_datetime)
-
+            params += (start_date, end_date)
+        elif start_date:
+            query += " AND createDate >= %s"
+            params += (start_date,)
+        elif end_date:
+            query += " AND createDate <= %s"
+            params += (end_date,)
+        
+        # Add ordering
+        query += " ORDER BY createDate DESC"
+        
+        # Execute query
         cursor.execute(query, params)
         cases = cursor.fetchall()
-
+        
         if cases:
-            click.echo("Matching cases:")
+            print(f"\nFound {len(cases)} matching case(s):")
+            print("-" * 80)
+            print(f"{'Case ID':<10} {'Case Number':<15} {'Create Date':<20} {'Update Date':<20}")
+            print("-" * 80)
+            
             for case in cases:
-                # Display the case details, modify this part based on your table structure
-                click.echo(f"Case Number: {case[1]}")  # Assuming caseNumber is at index 1
-                click.echo(f"Create Date: {case[2]}")  # Assuming createDate is at index 2
-                click.echo(f"Update Date: {case[3]}")  # Assuming updateDate is at index 3
-                # Add other attributes as needed
+                case_id = case[0]
+                case_num = case[1]
+                create_date = case[2]
+                update_date = case[3]
+                
+                print(f"{case_id:<10} {case_num:<15} {str(create_date):<20} {str(update_date):<20}")
+            
+            print("-" * 80)
+            
         else:
-            click.echo(f"No matching cases found.")
-    except mysql.connector.Error as err:
-        click.echo(f"Error: {err}")
+            print(f"No matching cases found for '{case_number}'.")
+            if start_date or end_date:
+                print("Try searching without date filters or with a different date range.")
+    
+    except Exception as e:
+        print(f"Error: {e}")
+    
     finally:
-        conn.close()
+        cursor.close()
+        connection.close()
