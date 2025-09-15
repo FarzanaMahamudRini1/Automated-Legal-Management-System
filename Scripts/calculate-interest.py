@@ -8,14 +8,6 @@ from datetime import date, datetime
 import decimal
 import matplotlib.pyplot as plt
 
-# Database Configuration
-DB_CONFIG = {
-    'host': 'database-1.ctnfprzjtuyt.us-east-1.rds.amazonaws.com',
-    'user': 'admin',
-    'password': 'Dnnbmstn1jrg',
-    'database': 'DataWarehouse',
-    'port': 3306
-}
 
 DEFAULT_ADDITIONAL_POINTS = 0.0
 
